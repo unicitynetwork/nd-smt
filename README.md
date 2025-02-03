@@ -49,3 +49,52 @@ $$\begin{align*}
 \end{align*}$$
 
 ($ST$ is thrown away after the setup ceremony)
+
+
+## Circuit
+
+
+Preprocess the proof:
+
+1. flatten the SMT (hash forest containing proof + addition batch) to the left (root is up)
+1. sort by layers, leaves first, and then lexicographically
+1. add 'wiring' signal fed into muxes before each hasher node.
+
+Let's denote maximum batch size $k_{max}$, SMT depth $d$.
+
+Circuit has two halves, both controlled by the same wiring signal. First half connects all insertion batch indices to zero (the empty element), second half to actual input values in the batch.
+First half computes to the root hash before insertion batch. Second half -- after.
+
+Sise of each half is $k_{max} \cdot d$
+
+Every following hashing layer connects inputs either to an output from previous layer, or element from proof.
+
+Wiring signal is a pre-computed part of witness and does not have to be public. This is a lots of wires, let's see the effect on proving time.
+
+![circuit](./pic/smt-circuit.drawio.png)
+
+Each cell above is implemented as a template with 2 muxes and a 2:1 hasher:
+
+![one cell](./pic/smt-circuit-cell.drawio.png)
+
+The leaf layer, first half mux inputs are connected to a vector with
+
+1. 'empty' leaf ($0$)
+1. 'proof' or sibling hashes ($s_i$)
+
+The leaf layer, second half mux inputs are connected to a vector with
+
+1. batch of new leaves ($I$)
+1. identical 'proof' or sibling hashes ($s_i$)
+
+
+Internal layers' muxes are connected to a vector a with
+
+1. previous layer cell output hashes,
+1. 'proof' or sibling hashes ($s_i$)
+
+Both halves' muxes are controlled by the same wiring signal. The positions of batch elements and proof elements are encoded into the control wires during the pre-processing.
+
+
+# License
+MIT
