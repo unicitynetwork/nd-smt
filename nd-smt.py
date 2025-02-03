@@ -1,13 +1,22 @@
 import hashlib
+import pprint
+
+default = b'\x00' * 1 # 32
+
+def dump(d):
+    pprint.pp(d, width=220)
 
 def hash(left, right):
-    return hashlib.sha256(left + right).digest()
+    if left == default and right == default:
+        return default
+    else:
+        return hashlib.sha256(left + right).digest()
 
 class SparseMerkleTree:
     def __init__(self, depth=256):
         self.depth = depth
         self.nodes = {}
-        self.default = [b'\x00' * 32] * (depth + 1)
+        self.default = [default] * (depth + 1)
         # Precompute default hashes for each level
         for i in range(1, depth + 1):
             self.default[i] = hash(self.default[i-1], self.default[i-1])
@@ -146,12 +155,14 @@ class SparseMerkleTree:
         proof = {}
         # proof of consistency: collect all siblings necessary to compute root
         # based on new batch of keys
-        # 'default' leaves are explicitly included
+        # 'default' leaves are NOT included
         for k in self.missing_keys(keys):
             level = self.depth - len(k)
-            proof[k] = self.get_node(level, k)
+            v = self.get_node(level, k)
+            if v != default:
+                proof[k] = v
 
-        # Perform all insertions
+        # Pe    rform all insertions
         for key, value in zip(keys, values):
             self.insert(key, value)
 
@@ -159,30 +170,44 @@ class SparseMerkleTree:
 
         return proof
 
-
     def verify_non_deletion(self, proof, old_root, new_root, keys, values):
         def compute_forest(forest, path):
-            if (not path in forest):
-                if len(path) >= self.depth:
-                    print(f"Missing leaf in non-deletion proof: {path}")
-                    return Exception   # todo: handle
-                return hash(compute_forest(forest, path+'0'), compute_forest(forest, path+'1'))
-            return forest[path]
-
-        # step 1. compute old root based on proof and 'empty' leaves in place of new batch
-        for key in keys:
-            proof[self.key_to_bits(key)] = self.default[0]
-
-        r1 = compute_forest(proof, '')
-        if r1 != old_root:
-            print(f"Non-deletion proof root mismatch: r:{r1}, oldr:{old_root}")
+            dump(forest)
+            for level in reversed(range(self.depth+1)):
+                last_parent = None
+                for k in sorted([key for key in forest if len(key) == level]):
+                    parent = k[:-1]
+                    if parent == last_parent:
+                        continue
+                    sibling = k[:-1] + ('1' if k[-1] == '0' else '0')
+                    pv = hash(forest[k], forest.get(sibling, default)) if k[-1] == '0' else hash(forest.get(sibling, default), forest[k])
+                    if parent in forest:
+                        print(f"redundant parent {parent} in proof")
+                        if forest[parent] != pv:
+                            print(f"parent mismatch {parent}->{forest[parent]}/{pv} in proof")
+                            return False
+                    if parent == path:
+                        return pv
+                    forest[parent] = pv
+                    last_parent = parent
             return False
 
-        # step 2. compute new root based on proof and leaves from the batch
-        for key, value in zip(keys, values):
-            proof[self.key_to_bits(key)] = value
+        # step 1. compute old root based on proof and 'empty' leaves in place of new batch
+        p1 = proof.copy()
+        for key in keys:
+            p1[self.key_to_bits(key)] = self.default[0]
 
-        r2 = compute_forest(proof, '')
+        r1 = compute_forest(p1, '')
+        if r1 != old_root:
+            print(f"Non-deletion proof root mismatch: r:{r1}, oldr:{old_root}")
+            #return False
+
+        # step 2. compute new root based on proof and leaves from the batch
+        p2 = proof.copy()
+        for key, value in zip(keys, values):
+            p2[self.key_to_bits(key)] = value
+
+        r2 = compute_forest(p2, '')
         if r2 != new_root:
             print(f"Non-deletion proof root mismatch: r:{r1}, newr:{new_root}")
             return False
@@ -198,22 +223,21 @@ class SparseMerkleTree:
         #  thus nothing was overwritten
         return True
 
-def main():
-    smt = SparseMerkleTree(depth=16)
 
-    keys = [b'\x01', b'\x02', b'\x04']
-    values = [b'value1', b'value2', b'value4']
+def main():
+    smt = SparseMerkleTree(depth=8)
+
+    keys = [b'\x01', b'\x02', b'\x05']
+    values = [b'value1', b'value2', b'value5']
     old_root = smt.get_root()
     proof = smt.batch_insert(keys, values)
     new_root = smt.get_root()
-
     print(smt.verify_non_deletion(proof, old_root, new_root, keys, values))
 
-    keys = [b'\x03', b'\x32', b'\x44', b'\xff']
-    values = [b'value3', b'value32', b'value44', b'valueff']
+    keys = [b'\x03', b'\x0a', b'\x0b', b'\x0c']
+    values = [b'value3', b'value0a', b'value0b', b'value0c']
     proof = smt.batch_insert(keys, values)
     new_new_root = smt.get_root()
-
     print(smt.verify_non_deletion(proof, new_root, new_new_root, keys, values))
 
 if __name__ == "__main__":
