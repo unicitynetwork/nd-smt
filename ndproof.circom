@@ -69,14 +69,29 @@ template ForestHasher(DEPTH, WIDTH) {
     signal intermediateRoots[DEPTH][WIDTH];
 
     for (var d = 0; d < DEPTH; d++) {
-        for (var i = 0; i < WIDTH; i++) {
+        // Calculate the number of cells in this layer, it is a binary tree and shrinks towards root
+        var numCells = 1 << (DEPTH - 1 - d); // 2^(DEPTH-1-d)
+        if (numCells > WIDTH) {
+            numCells = WIDTH;
+        }
+        for (var i = 0; i < numCells; i++) {
             cell[d][i] = Cell(WIDTH);
             cell[d][i].controlL <== controlL[d][i];
             cell[d][i].controlR <== controlR[d][i];
             if (d == 0) {
                 cell[d][i].in <== batch;   // leaves connect to input batch
             } else {
-                cell[d][i].in <== intermediateRoots[d-1];  // internal nodes
+                // intermediate wires with no cells to connect are connected to 0
+                var prevLayerCells = 1 << (DEPTH - d);
+                if (prevLayerCells > WIDTH) {
+                    prevLayerCells = WIDTH;
+                }
+                for (var j = 0; j < prevLayerCells; j++) {
+                    cell[d][i].in[j] <== intermediateRoots[d-1][j];
+                }
+                for (var j = prevLayerCells; j < WIDTH; j++) {
+                    cell[d][i].in[j] <== 0;
+                }
             }
             cell[d][i].proof <== proof;
             intermediateRoots[d][i] <== cell[d][i].out;
@@ -123,4 +138,4 @@ template NdVerifier(DEPTH, WIDTH) {
     result2 === root2;
 }
 
-component main {public [batch, root1, root2]} = NdVerifier(128, 10);
+component main {public [batch, root1, root2]} = NdVerifier(16, 10);
