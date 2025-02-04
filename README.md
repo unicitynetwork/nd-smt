@@ -95,6 +95,15 @@ Internal layers' muxes are connected to a vector a with
 
 Both halves' muxes are controlled by the same wiring signal. The positions of batch elements and proof elements are encoded into the control wires during the pre-processing.
 
+## Optimization ideas
+
+* Special mux with 2 outs and multiplexed control
+* multiplex control wire signals within a layer (TBD the effect: removes wires, but adds gates)
+* Unlike depicted above, layers close to the root have $1, 2, 4, 8, \dots, k_{max}$ cells
+* It is possible to pack in more inputs than $k_{max}$ if some inputs share hashing steps at the leaf layer (ie, are connected to the same cell), that is, dynamic batch size to fully fill the width of circuit
+* Reduce depth ($d$), ie, use indexed merkle tree with fixed max. capacity insted of complete SMT
+* Greater arity than 2?
+
 
 # License
 MIT
