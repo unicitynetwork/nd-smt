@@ -1,58 +1,52 @@
 # Trustless SMT accumulator
 
-Trustless addition only accumulator, that is, a Sparse Merkle Tree with cryptographic consistency proof, consistency meaning that during a batch of updates, there were no changes or deletions of existing leaves.
-
 This is the base data structure for implementing Unicity's aggregation layer.
 
 By using an appropriate cryptographic SNARK, the size of proof can be reduced to constant size. Proving time depends on the logarithm of capacity and max. addition batch size.
 
-# Proof of Non-deletion (sketch)
+## Definitions
 
-## Without SNARK
+Trustless append only accumulator is consistent, if during insertion of a batch of updates there were no changes or deletions of existing leaves. The data structure implements other usual functions like inclusion proofs and non-inclusion proofs.
 
-We have a batch of SMT insertions $B_i = (k_1, k_2, \dots, k_j)$, where $k$ is an inserted key, executed during a round of operation. SMT root hash before the round is $r_{i-1}$, and after the round is $r_i$; these values are certified by the BFT finality gadget and can be verified as authentic.
+The size of consistency proof depends on the size of addition batch and logarithm of capacity. If we denote batch size as $k$ and depth $d$, then size of consistency proof is $O(k \cdot d)$, where $d \approx \log(capacity)$.
 
-   - Let's take the SMT after insertion round:
-   - We record all new additions $B_i$,
-   - We record all sibling hashes $s_i$ (roots of subtrees not containing new additions) of the data structure, so that $r_i$ can be computed based on recorded data. Also, decorate the siblings with their positions in SMT.
-   - Let's take the SMT before the insertion round:
-   - We mark siblings recorded during the previous step (note that they haven't changed) in the SMT
-   - We record all other missing siblings $s_i'$ so that $r_{i-1}$ can be computed based on marked siblings and "missing siblings". (record their positions as well).
+By using a cryptographic SNARK (a zero knowledge proof with certain properties), the size of consistency proof can be further reduced to constant size.
 
+After every addition batch, the root of aggregation layer is certified by the BFT Finality Gadget, ensuring its uniqueness and immutability. This provides a useful trust anchor for consistency proofs, inclusion proofs, and non-inclusion proofs.
 
-Proof is a tuple of two sets $(s_i, s_i')$. For proof verification we need $r_i, r_{i-1}$ (authentic trust anchors) and $(s_i, s_i')$ and $B_i$.
+## Proof of Consistency
 
-In order to prove non-deletion, we show that:
+We have $i$th batch of insertions $B = (k_1, k_2, \dots, k_j)$, where $k$ is an inserted item; all executed during a round of operation. Root hash before the round is $r_{i-1}$, and after the round is $r_i$. The accumulator is implemented as a Sparse Merkle Tree (SMT).
 
-1. $r_{i-1}$ can be computed based on recorded data $(s_i, s'_i)$,
-1. $r_i$ can be computed based on recorded data $(s_i, B_i)$,
-1. During both computations, sibling hashes $s_i$  are the same.
+The consistency proof generation for batch $B_i$ works as follows:
 
-This proves that on assumption that $r_i, r_{i-1}$ are authentic, only keys within $B_i$ were added, the rest did not change.
+*  Insert the new SMT leaves in $B_i$,
+*  Starting from the newly inserted leaves, for each sibling hash necessary to compute the root of the tree, we record sibling's path and sibling's value as the proof. Let's denote the set as $s_i$.
+*  Record $(B_i, r_{i-1}, r_i, s_i)$.
 
+Proof verification works as follows:
 
-## With SNARK
+*  authenticate $r_{i-1}, r_i$
+*  Build an incomplete SMT tree: for each item in $B_i$, we insert the value of empty leaf at appropriate position,
+*  All necessary siblings necessary to compute the root are available in $s_i$. Compute the root, compare with $r_{i-1}$, if not equal then proof is not valid.
+*  Build again an incomplete SMT tree, for each item in $B_i$, we insert the value of each key into appropriate position.
+*  Compute the root based on siblings in $s_i$. If root is not equal to $r_i$ then proof is not valid.
+*  Proof is valid if the checks above passed.
 
-Statement is the verification algorithm above,
-
-Instance is defined by the root of trust and insertions, $I = ((r_i, r_{i-1}),B_i)$,
-
-Witness $\omega = (s_i, s'_i)$ and we do not have to keep it secret.
-
-Let's represent the Statement (verification algorithm) as a constraint system $R$ (using e.g. CIRCOM language, with $\omega$ as private input signals and $I$ public). SNARK is defined by the following functions:
-
-$$\begin{align*}
-(CRS, ST) &\gets \mathsf{Setup}(R, \lambda) \\
-      \pi &\gets \mathsf{Prove}(R, CRS, I, \omega) \\
- \{1, 0\} &\gets \mathsf{Verify}(R, CRS, I, \pi) \\
-      \pi &\gets \mathsf{Sim}(R, CRS, ST,I)
-\end{align*}$$
-
-($ST$ is thrown away after the setup ceremony)
+This shows that given authentic $s_{i-1}, s_i$, the keys in $B_i$ were empty before the insertion batch, and after execution of insertion batch the values in $B_i$ were recorded at the positions defined by respective keys, and there were no other changes.
 
 
-## Circuit
+## SNARK based Proof of Consistency
 
+Statement to be proved is the verification algorithm sketched above. Instance is defined by the root of trust and insertions, $I = ((r_i, r_{i-1}),B_i)$. Witness $\omega = (s_i, s'_i)$ is the secret in zero knowledge, but for our use-case, it is not necessary to keep the witness secret.
+
+The statement is implemented as a constraint system $R$ using the CIRCOM domain specific language. The witness is generated based on $s_i, B_i$, and supplemented by control wires defining how individual hashing blocks in the circuit are connected together and to the inputs. If all constraints are satisfied, then the proof is valid.
+
+The proving backend is Groth 2016\footnote{\url{https://eprint.iacr.org/2016/260}} with conveniently small proof size. The proving time depends on the depth of SMT and the maximum size of the insertion batch. Importantly, the proving effort does not depend on the total size/capacity of SMT, enabling fairly large instantiations.
+
+If the layer above verifies proofs of consistency, then Unicity aggregation layer is trustless. Still, some redundancy (at least one node able to persist the data structure) is required for data availability.
+
+## Circuit Design
 
 Preprocess the proof:
 
@@ -87,7 +81,6 @@ The leaf layer, second half mux inputs are connected to a vector with
 1. batch of new leaves ($I$)
 1. identical 'proof' or sibling hashes ($s_i$)
 
-
 Internal layers' muxes are connected to a vector a with
 
 1. previous layer cell output hashes,
@@ -97,12 +90,12 @@ Both halves' muxes are controlled by the same wiring signal. The positions of ba
 
 ## Optimization ideas
 
-* Special mux with 2 outs and multiplexed control
-* multiplex control wire signals within a layer (TBD the effect: removes wires, but adds gates)
-* Unlike depicted above, layers close to the root have $1, 2, 4, 8, \dots, k_{max}$ cells
-* It is possible to pack in more inputs than $k_{max}$ if some inputs share hashing steps at the leaf layer (ie, are connected to the same cell), that is, dynamic batch size to fully fill the width of circuit
-* Reduce depth ($d$), ie, use indexed merkle tree with fixed max. capacity insted of complete SMT
-* Greater arity than 2?
+- [ ] Special mux with 2 outs and multiplexed control
+- [ ] multiplex control wire signals within a layer (TBD the effect: removes wires, but adds gates)
+- [x] Unlike depicted above, layers close to the root have $1, 2, 4, 8, \dots, k_{max}$ cells
+- [ ] It is possible to pack in more inputs than $k_{max}$ if some inputs share hashing steps at the leaf layer (ie, are connected to the same cell), that is, dynamic batch size to fully fill the width of circuit
+- [ ] Reduce depth ($d$), ie, use indexed Merkle tree with fixed max. capacity instead of complete SMT
+- [ ] Greater arity than 2?
 
 
 # License
