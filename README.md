@@ -33,14 +33,14 @@ Proof verification works as follows:
 *  Compute the root based on siblings in $s_i$. If root is not equal to $r_i$ then proof is not valid.
 *  Proof is valid if the checks above passed.
 
-This shows that given authentic $s_{i-1}, s_i$, the keys in $B_i$ were empty before the insertion batch, and after execution of insertion batch the values in $B_i$ were recorded at the positions defined by respective keys, and there were no other changes.
+This shows that given authentic $r_{i-1}, r_i$, the keys in $B_i$ were empty before the insertion batch, and after execution of insertion batch the values in $B_i$ were recorded at the positions defined by respective keys, and there were no other changes.
 
 
 ## SNARK based Proof of Consistency
 
-Statement to be proved is the verification algorithm sketched above. Instance is defined by the root of trust and insertions, $I = ((r_i, r_{i-1}),B_i)$. Witness $\omega = (s_i, s'_i)$ is the secret in zero knowledge, but for our use-case, it is not necessary to keep the witness secret.
+Statement to be proved is the verification algorithm sketched above. Instance is defined by the root of trust and insertions, $I = ((r_i, r_{i-1}),B_i)$. Witness $\omega = (s_i)$ is the secret in zero knowledge, but for our use-case, it is not necessary to keep the witness secret.
 
-The statement is implemented as a constraint system $R$ using the CIRCOM domain specific language. The witness is generated based on $s_i, B_i$, and supplemented by control wires defining how individual hashing blocks in the circuit are connected together and to the inputs. If all constraints are satisfied, then the proof is valid.
+The statement is implemented as a constraint system $R$ using the CIRCOM domain specific language. The witness is generated based on $s_i, B_i$, and supplemented by control wires defining how individual hashing blocks in the circuit are connected to the previous layer and to the inputs. If all constraints are satisfied, then the proof is valid.
 
 The proving backend is Groth 2016\footnote{\url{https://eprint.iacr.org/2016/260}} with conveniently small proof size. The proving time depends on the depth of SMT and the maximum size of the insertion batch. Importantly, the proving effort does not depend on the total size/capacity of SMT, enabling fairly large instantiations.
 
