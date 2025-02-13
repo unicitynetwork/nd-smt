@@ -17,12 +17,6 @@ class CustomJSONEncoder(json.JSONEncoder):
 def jdump(d):
     return json.dumps(d, cls=CustomJSONEncoder, indent=4)
 
-# def hash(left, right):
-#     if left == default and right == default:
-#         return default
-#     else:
-#         return hashlib.sha256(left + right).digest()
-
 poseidon = PoseidonHash()
 def hash(left, right):
     # no such rule is needed in circuit as we connect relevant inputs straight to 'empty'
@@ -272,8 +266,7 @@ class SparseMerkleTree:
         wiringL = [[0] * width for _ in range(self.depth)]
         wiringR = [[0] * width for _ in range(self.depth)]
         proof = []
-        # index zero in input vector is "empty"; one layer is input batch, others are internal values
-        batch = [[default] for _ in range(self.depth+1)]
+        batch = [[] for _ in range(self.depth+1)]
         # collect some statistics: width utilized and number of proof elements used at every layer
         stats = [0 for _ in range(self.depth)]
         stats2 = [0 for _ in range(self.depth)]
@@ -297,21 +290,22 @@ class SparseMerkleTree:
                     if len(bm[level]) > 0 and bm[level][0] == sibling:  # see if next input is the sibling
                         k2 = bm[level].pop(0)
                         if k[-1] == '0':
-                            wiringL[level-1][w] = len(batch[level])-1
+                            # index of 1st element is 1 because 0 is hardwired to 'empty'
+                            wiringL[level-1][w] = len(batch[level])
                             batch[level].append(kv.get(k2, None))
-                            wiringR[level-1][w] = len(batch[level])-1
+                            wiringR[level-1][w] = len(batch[level])
                         else:
-                            wiringR[level-1][w] = len(batch[level])-1
+                            wiringR[level-1][w] = len(batch[level])
                             batch[level].append(kv.get(k2, None))
-                            wiringL[level-1][w] = len(batch[level])-1
+                            wiringL[level-1][w] = len(batch[level])
                     else:
                         # no sibling provided - thus "empty";
                         # technically no empties in middle layers if there are no special hashing rules
                         if k[-1] == '0':
-                            wiringL[level-1][w] = len(batch[level])-1
+                            wiringL[level-1][w] = len(batch[level])
                             wiringR[level-1][w] = 0
                         else:
-                            wiringR[level-1][w] = len(batch[level])-1
+                            wiringR[level-1][w] = len(batch[level])
                             wiringL[level-1][w] = 0
                 else:
                     # sibling from proof
@@ -319,12 +313,12 @@ class SparseMerkleTree:
                     proof.append(sv)
                     # todo: avoid adding duplicates, e.g. when "empty" depends on layer
                     if k[-1] == '0':
-                        wiringL[level-1][w] = len(batch[level])-1
-                        wiringR[level-1][w] = len(proof)-1 + width
+                        wiringL[level-1][w] = len(batch[level])
+                        wiringR[level-1][w] = len(proof) + width
 
                     else:
-                        wiringR[level-1][w] = len(batch[level])-1
-                        wiringL[level-1][w] = len(proof)-1 + width
+                        wiringR[level-1][w] = len(batch[level])
+                        wiringL[level-1][w] = len(proof) + width
                 parent = k[:-1]
                 bm[level-1].append(parent)
 

@@ -1,10 +1,11 @@
-pragma circom 2.0.0;
+pragma circom 2.0.6;
 
 include "node_modules/circomlib/circuits/poseidon.circom";
 include "node_modules/circomlib/circuits/bitify.circom";
 include "node_modules/circomlib/circuits/multiplexer.circom";
+include "node_modules/circomlib/circuits/comparators.circom";
 
-// todo: compare with Quin Selector?
+// produces less constraints than Quin Selector
 template PickOne(N) {
     signal input in[N];
     signal input sel;
@@ -18,18 +19,86 @@ template PickOne(N) {
     out <== mux.out[0];
 }
 
+template CalculateTotal(n) {
+    signal input in[n];
+    signal output out;
+
+    signal sums[n];
+
+    sums[0] <== in[0];
+
+    for (var i = 1; i < n; i++) {
+        sums[i] <== sums[i-1] + in[i];
+    }
+
+    out <== sums[n-1];
+}
+
+template QuinSelector(choices) {
+    signal input in[choices];
+    signal input sel;
+    signal output out;
+
+    component lessThan = LessThan(7);  // 7 - number of in bits, up to 128 choices
+    lessThan.in[0] <== sel;
+    lessThan.in[1] <== choices;
+    lessThan.out === 1;
+
+    component calcTotal = CalculateTotal(choices);
+    component eqs[choices];
+
+    // For each item, check whether its index equals the input index.
+    for (var i = 0; i < choices; i ++) {
+        eqs[i] = IsEqual();
+        eqs[i].in[0] <== i;
+        eqs[i].in[1] <== sel;
+
+        // eqs[i].out is 1 if the index matches. As such, at most one input to
+        // calcTotal is not 0.
+        calcTotal.in[i] <== eqs[i].out * in[i];
+    }
+
+    // Returns 0 + 0 + 0 + item
+    out <== calcTotal.out;
+}
+
+template Mux() {
+    signal input sel;
+    signal input in[2];
+    signal output out;
+    signal p;
+
+    p <== in[0] * (1 - sel);
+    out <== p + (in[1] * sel);
+}
+
 template Hash2() {
     signal input L;
     signal input R;
     signal output out;
 
+    component isZeroL = IsZero();
+    isZeroL.in <== L;
+    component isZeroR = IsZero();
+    isZeroR.in <== R;
+    signal bothZero <== isZeroL.out * isZeroR.out;
+
     component h = Poseidon(2);
     h.inputs[0] <== L;
     h.inputs[1] <== R;
 
-    out <== h.out;
+    component mux = Mux();
+    mux.sel <== bothZero;
+    mux.in[0] <== h.out;
+    mux.in[1] <== 0;
+    out <== mux.out;
 }
 
+// control signals are choosing inputs from the vectors:
+// leaf layer:
+// |  0 |  input batch       |   proof    |
+// following layers:
+// |  0 |  prev. layer outs  |   proof    |
 template Cell(N, M) {
     signal input controlL;
     signal input controlR;
@@ -37,18 +106,21 @@ template Cell(N, M) {
     signal input proof[M];
     signal output out;
 
-    component muxL = PickOne(N+M);
-    component muxR = PickOne(N+M);
+    component muxL = PickOne(N+M+1);
+    component muxR = PickOne(N+M+1);
     component hasher = Hash2();
 
+    muxL.in[0] <-- 0;
+    muxR.in[0] <-- 0;
+
     for (var i = 0; i < N; i++) {
-        muxL.in[i] <== in[i];
-        muxR.in[i] <== in[i];
+        muxL.in[i+1] <== in[i];
+        muxR.in[i+1] <== in[i];
     }
 
     for (var i = N; i < N+M; i++) {
-        muxL.in[i] <== proof[i-N];
-        muxR.in[i] <== proof[i-N];
+        muxL.in[i+1] <== proof[i-N];
+        muxR.in[i+1] <== proof[i-N];
     }
     muxL.sel <== controlL;
     muxR.sel <== controlR;
@@ -76,8 +148,8 @@ template ForestHasher(DEPTH, WIDTH) {
         }
         for (var i = 0; i < numCells; i++) {
             cell[d][i] = Cell(WIDTH, DEPTH); // depth ~ max size of proof
-            cell[d][i].controlL <== controlL[d][i];
-            cell[d][i].controlR <== controlR[d][i];
+            cell[d][i].controlL <== controlL[DEPTH-d-1][i];  // flip layers of wires
+            cell[d][i].controlR <== controlR[DEPTH-d-1][i];
             if (d == 0) {
                 cell[d][i].in <== batch;   // leaves connect to input batch
             } else {
@@ -90,11 +162,13 @@ template ForestHasher(DEPTH, WIDTH) {
                     cell[d][i].in[j] <== intermediateRoots[d-1][j];
                 }
                 for (var j = prevLayerCells; j < WIDTH; j++) {
-                    cell[d][i].in[j] <== 0;
+                    cell[d][i].in[j] <-- 0;
                 }
             }
             cell[d][i].proof <== proof;
             intermediateRoots[d][i] <== cell[d][i].out;
+            //log("Cell", d, i, "in:", cell[d][i].controlL , cell[d][i].controlR,
+            //       "out:", cell[d][i].out);
         }
     }
 
@@ -115,7 +189,7 @@ template NdVerifier(DEPTH, WIDTH) {
     for (var i = 0; i < WIDTH; i++) {
         fh1.batch[i] <== 0;
     }
-    fh1.proof <== proof; // assignment works for whole array?
+    fh1.proof <== proof;
     for (var i = 0; i < DEPTH; i++) {
         for (var j = 0; j < WIDTH; j++) {
             fh1.controlL[i][j] <== controlL[i][j];
