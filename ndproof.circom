@@ -1,10 +1,10 @@
 pragma circom 2.0.0;
 
-// include "node_modules/circomlib/circuits/sha256/sha256.circom";
 include "node_modules/circomlib/circuits/poseidon.circom";
 include "node_modules/circomlib/circuits/bitify.circom";
 include "node_modules/circomlib/circuits/multiplexer.circom";
 
+// todo: compare with Quin Selector?
 template PickOne(N) {
     signal input in[N];
     signal input sel;
@@ -30,15 +30,15 @@ template Hash2() {
     out <== h.out;
 }
 
-template Cell(N) {
+template Cell(N, M) {
     signal input controlL;
     signal input controlR;
     signal input in[N];
-    signal input proof[N];
+    signal input proof[M];
     signal output out;
 
-    component muxL = PickOne(2*N);
-    component muxR = PickOne(2*N);
+    component muxL = PickOne(N+M);
+    component muxR = PickOne(N+M);
     component hasher = Hash2();
 
     for (var i = 0; i < N; i++) {
@@ -46,9 +46,9 @@ template Cell(N) {
         muxR.in[i] <== in[i];
     }
 
-    for (var i = 0; i < N; i++) {
-        muxL.in[N+i] <== proof[i];
-        muxR.in[N+i] <== proof[i];
+    for (var i = N; i < N+M; i++) {
+        muxL.in[i] <== proof[i-N];
+        muxR.in[i] <== proof[i-N];
     }
     muxL.sel <== controlL;
     muxR.sel <== controlR;
@@ -59,7 +59,7 @@ template Cell(N) {
 
 template ForestHasher(DEPTH, WIDTH) {
     signal input batch[WIDTH];
-    signal input proof[WIDTH];
+    signal input proof[DEPTH];
     signal input controlL[DEPTH][WIDTH];
     signal input controlR[DEPTH][WIDTH];
     signal output root;
@@ -75,7 +75,7 @@ template ForestHasher(DEPTH, WIDTH) {
             numCells = WIDTH;
         }
         for (var i = 0; i < numCells; i++) {
-            cell[d][i] = Cell(WIDTH);
+            cell[d][i] = Cell(WIDTH, DEPTH); // depth ~ max size of proof
             cell[d][i].controlL <== controlL[d][i];
             cell[d][i].controlR <== controlR[d][i];
             if (d == 0) {
@@ -103,7 +103,7 @@ template ForestHasher(DEPTH, WIDTH) {
 
 template NdVerifier(DEPTH, WIDTH) {
     signal input batch[WIDTH];
-    signal input proof[WIDTH];
+    signal input proof[DEPTH];
     signal input root1;
     signal input root2;
     signal input controlL[DEPTH][WIDTH];
@@ -138,4 +138,4 @@ template NdVerifier(DEPTH, WIDTH) {
     result2 === root2;
 }
 
-component main {public [batch, root1, root2]} = NdVerifier(16, 10);
+component main {public [batch, root1, root2]} = NdVerifier(32, 10);

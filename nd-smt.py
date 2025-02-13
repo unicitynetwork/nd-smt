@@ -1,16 +1,36 @@
-import hashlib
+# import hashlib
+from circomlibpy.poseidon import PoseidonHash
 import pprint
+import sys
+import random
+import json
 
-default = b'\x00' * 1 # 32
+default = 0  # default 'empty' leaf
 
 def dump(d):
     pprint.pp(d, width=220)
 
+class CustomJSONEncoder(json.JSONEncoder):
+    def encode(self, obj):
+        return super().encode(obj).replace("\n        ", " ").replace("\n    ]", "]").replace("     ", " ")
+
+def jdump(d):
+    return json.dumps(d, cls=CustomJSONEncoder, indent=4)
+
+# def hash(left, right):
+#     if left == default and right == default:
+#         return default
+#     else:
+#         return hashlib.sha256(left + right).digest()
+
+poseidon = PoseidonHash()
 def hash(left, right):
+    # no such rule is needed in circuit as we connect relevant inputs straight to 'empty'
     if left == default and right == default:
         return default
     else:
-        return hashlib.sha256(left + right).digest()
+        return poseidon.hash(2, [left, right])
+
 
 class SparseMerkleTree:
     def __init__(self, depth=256):
@@ -21,6 +41,7 @@ class SparseMerkleTree:
         for i in range(1, depth + 1):
             self.default[i] = hash(self.default[i-1], self.default[i-1])
 
+
     def get_root(self):
         return self.get_node(self.depth, '')
 
@@ -29,7 +50,8 @@ class SparseMerkleTree:
 
     def update_node(self, level, path, value):
         if level == 0 and not (self.nodes.get((0, path)) is None):
-            print(f"The leaf '{path}' is already set, but we're allowing this for testing")
+            print(f"The leaf '{path}' is already set", file=sys.stderr)
+            return
         self.nodes[(level, path)] = value
 
     def insert(self, key, value):
@@ -149,7 +171,8 @@ class SparseMerkleTree:
 
     def key_to_bits(self, key):
         # Convert key to a string of 'depth' bits
-        return format(int.from_bytes(key, 'big'), '0{}b'.format(self.depth))
+        #return format(int.from_bytes(key, 'big'), '0{}b'.format(self.depth))
+        return format(key, '0{}b'.format(self.depth))
 
     def batch_insert(self, keys, values):
         proof = {}
@@ -158,11 +181,13 @@ class SparseMerkleTree:
         # 'default' leaves are NOT included
         for k in self.missing_keys(keys):
             level = self.depth - len(k)
+            if level >= self.depth or level < 0:
+                raise ValueError(f"Panic, level {level} out of range")
             v = self.get_node(level, k)
             if v != default:
                 proof[k] = v
 
-        # Pe    rform all insertions
+        # Perform all insertions
         for key, value in zip(keys, values):
             self.insert(key, value)
 
@@ -172,7 +197,6 @@ class SparseMerkleTree:
 
     def verify_non_deletion(self, proof, old_root, new_root, keys, values):
         def compute_forest(forest, path):
-            dump(forest)
             for level in reversed(range(self.depth+1)):
                 last_parent = None
                 for k in sorted([key for key in forest if len(key) == level]):
@@ -182,9 +206,9 @@ class SparseMerkleTree:
                     sibling = k[:-1] + ('1' if k[-1] == '0' else '0')
                     pv = hash(forest[k], forest.get(sibling, default)) if k[-1] == '0' else hash(forest.get(sibling, default), forest[k])
                     if parent in forest:
-                        print(f"redundant parent {parent} in proof")
+                        print(f"redundant parent {parent} in proof", file=sys.stderr)
                         if forest[parent] != pv:
-                            print(f"parent mismatch {parent}->{forest[parent]}/{pv} in proof")
+                            print(f"parent mismatch {parent}->{forest[parent]}/{pv} in proof", file=sys.stderr)
                             return False
                     if parent == path:
                         return pv
@@ -199,7 +223,7 @@ class SparseMerkleTree:
 
         r1 = compute_forest(p1, '')
         if r1 != old_root:
-            print(f"Non-deletion proof root mismatch: r:{r1}, oldr:{old_root}")
+            print(f"Non-deletion proof root mismatch: r:{r1}, oldr:{old_root}", file=sys.stderr)
             #return False
 
         # step 2. compute new root based on proof and leaves from the batch
@@ -209,7 +233,7 @@ class SparseMerkleTree:
 
         r2 = compute_forest(p2, '')
         if r2 != new_root:
-            print(f"Non-deletion proof root mismatch: r:{r1}, newr:{new_root}")
+            print(f"Non-deletion proof root mismatch: r:{r1}, newr:{new_root}", file=sys.stderr)
             return False
 
         # it is possible to compute the root based on
@@ -223,22 +247,161 @@ class SparseMerkleTree:
         #  thus nothing was overwritten
         return True
 
+    def prepare_witness(self, forest, keys, values, width):
+
+        def deptharray(dict):
+            # returns the matrix [level][keys]
+            result = [[] for _ in range(self.depth + 1)]
+            for key, value in sorted(dict.items()):
+                keylen = len(key)
+                result[keylen].append(key)
+            return result
+
+        #kz = {self.key_to_bits(key): self.default for key, value in zip(keys, values)}
+        # (var naming)   k-v dict    matrix[layer]  output array
+        #                --------    ------         ------------
+        # input batch:   kv          bm             batch[self.depth]
+        # proof:         forest      fm             proof
+        #
+        kv = {self.key_to_bits(key): value for key, value in zip(keys, values)}
+
+        bm = deptharray(kv)
+        fm = deptharray(forest)
+
+        # returned witness + instance
+        wiringL = [[0] * width for _ in range(self.depth)]
+        wiringR = [[0] * width for _ in range(self.depth)]
+        proof = []
+        # index zero in input vector is "empty"; one layer is input batch, others are internal values
+        batch = [[default] for _ in range(self.depth+1)]
+        # collect some statistics: width utilized and number of proof elements used at every layer
+        stats = [0 for _ in range(self.depth)]
+        stats2 = [0 for _ in range(self.depth)]
+        for level in reversed(range(1, self.depth+1)):
+            for w in range(width+1): # loop over cells, one too wide to catch overflow
+
+                if len(bm[level]) <= 0:
+                    stats[level-1] = w  # number includes zeroth cell
+                    break
+                k = bm[level].pop(0)
+
+                if w >= width:
+                    raise OverflowError(f"Circuit width overflow. w: {w}, level: {level}")
+
+                batch[level].append(kv.get(k, None))  # append value to output vector
+
+                sibling = k[:-1] + ('1' if k[-1] == '0' else '0')
+                # check if there is sibling provided in proof
+                sv = forest.get(sibling, None)
+                if sv is None:
+                    if len(bm[level]) > 0 and bm[level][0] == sibling:  # see if next input is the sibling
+                        k2 = bm[level].pop(0)
+                        if k[-1] == '0':
+                            wiringL[level-1][w] = len(batch[level])-1
+                            batch[level].append(kv.get(k2, None))
+                            wiringR[level-1][w] = len(batch[level])-1
+                        else:
+                            wiringR[level-1][w] = len(batch[level])-1
+                            batch[level].append(kv.get(k2, None))
+                            wiringL[level-1][w] = len(batch[level])-1
+                    else:
+                        # no sibling provided - thus "empty";
+                        # technically no empties in middle layers if there are no special hashing rules
+                        if k[-1] == '0':
+                            wiringL[level-1][w] = len(batch[level])-1
+                            wiringR[level-1][w] = 0
+                        else:
+                            wiringR[level-1][w] = len(batch[level])-1
+                            wiringL[level-1][w] = 0
+                else:
+                    # sibling from proof
+                    stats2[level] = stats2[level] + 1
+                    proof.append(sv)
+                    # todo: avoid adding duplicates, e.g. when "empty" depends on layer
+                    if k[-1] == '0':
+                        wiringL[level-1][w] = len(batch[level])-1
+                        wiringR[level-1][w] = len(proof)-1 + width
+
+                    else:
+                        wiringR[level-1][w] = len(batch[level])-1
+                        wiringL[level-1][w] = len(proof)-1 + width
+                parent = k[:-1]
+                bm[level-1].append(parent)
+
+        print("Proof usage:", stats2, file=sys.stderr)
+        print("Cell  usage:", stats, "Inputs:", len(batch[self.depth]), "Proof:", len(proof), file=sys.stderr)
+
+        return (batch[self.depth], proof, wiringL, wiringR)
+
 
 def main():
-    smt = SparseMerkleTree(depth=8)
+    depth = 32
+    width = 10
 
-    keys = [b'\x01', b'\x02', b'\x05']
-    values = [b'value1', b'value2', b'value5']
+    def to_int(aa):
+        if isinstance(aa, (list, tuple)):
+            return [to_int(a) for a in aa]
+        elif isinstance(aa, bytes):
+            return int.from_bytes(aa, byteorder='big')
+        else:
+            return to_int(str(aa).encode())
+
+    def to_bytes(bb):
+        return str(bb).encode()
+
+    def pad(aa, l):
+        if len(aa) > l:
+            raise OverflowError("too long")
+        return [f"""{a}""" for a in aa] + ["0"] * (l - len(aa))
+
+    def js(a):
+        # json strings are safer than long ints
+        return f"""{a}"""
+
+    smt = SparseMerkleTree(depth)
+
+    keys = to_int([b'\x01', b'\x02', b'\x05'])
+    values = to_int([b'value1', b'value2', b'value5'])
     old_root = smt.get_root()
     proof = smt.batch_insert(keys, values)
     new_root = smt.get_root()
-    print(smt.verify_non_deletion(proof, old_root, new_root, keys, values))
+    assert smt.verify_non_deletion(proof, old_root, new_root, keys, values)
 
-    keys = [b'\x03', b'\x0a', b'\x0b', b'\x0c']
-    values = [b'value3', b'value0a', b'value0b', b'value0c']
+    # keys = [b'\x03', b'\x0a', b'\x0b', b'\x0c']
+    # values = [b'value3', b'value0a', b'value0b', b'value0c']
+    # keys = []
+    # values = []
+    # for i in range(32):
+    #     ri = random.randint(0, 2**depth-1)
+    #     if ri in keys:
+    #         break
+    #     keys.append(ri)
+    #     values.append(to_int(("Val " + str(ri)).encode()))
+
+    # proof = smt.batch_insert(keys, values)
+    # new_root = smt.get_root()
+
+    keys = []
+    values = []
+    for i in range(4):
+        ri = random.randint(0, 2**depth-1)
+        p = smt.key_to_bits(ri)
+        if ri in keys:
+            break
+        keys.append(ri)
+        values.append(to_int(("Val " + str(ri)).encode()))
+
     proof = smt.batch_insert(keys, values)
     new_new_root = smt.get_root()
-    print(smt.verify_non_deletion(proof, new_root, new_new_root, keys, values))
+    assert smt.verify_non_deletion(proof, new_root, new_new_root, keys, values)
+    batch, proof, wiringL, wiringR = smt.prepare_witness(proof, keys, values, width)
+
+    # witness formatted as json
+    jsond = jdump({'batch': pad(batch, width), 'proof': pad(proof, depth),
+                           'controlL': wiringL, 'controlR': wiringR,
+                           'root1': js(new_root), 'root2': js(new_new_root)})
+    print(jsond)
+
 
 if __name__ == "__main__":
     main()
