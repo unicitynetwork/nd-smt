@@ -74,29 +74,33 @@ Each cell above is implemented as a template with 2 muxes and a 2:1 hasher:
 The leaf layer, first half mux inputs are connected to a vector with
 
 1. 'empty' leaf ($0$)
+1.  all the new leaves in the batch are connected to 'empty' ($0$)
 1. 'proof' or sibling hashes ($s_i$)
 
 The leaf layer, second half mux inputs are connected to a vector with
 
+1. 'empty' leaf ($0$)
 1. batch of new leaves ($I$)
 1. identical 'proof' or sibling hashes ($s_i$)
 
 Internal layers' muxes are connected to a vector a with
 
+1. 'empty' leaf
 1. previous layer cell output hashes,
 1. 'proof' or sibling hashes ($s_i$)
 
-Both halves' muxes are controlled by the same wiring signal. The positions of batch elements and proof elements are encoded into the control wires during the pre-processing.
+Both halves' muxes are controlled by the same wiring signal. The positions of batch elements and proof elements are encoded into the control wires during the pre-processing, that is, control signals are part of the witness.
 
 ## Optimization ideas
 
-- [ ] Special mux with 2 outs and multiplexed control
+- [x] Special mux with 2 outs and multiplexed control (minor effect on number of wires, removed)
+- [x] Quin Selector instead of circomlib's mux (negative effect, removed)
 - [ ] multiplex control wire signals within a layer (TBD the effect: removes wires, but adds gates)
 - [x] Unlike depicted above, layers close to the root have $1, 2, 4, 8, \dots, k_{max}$ cells
-- [ ] It is possible to pack in more inputs than $k_{max}$ if some inputs share hashing steps at the leaf layer (ie, are connected to the same cell), that is, dynamic batch size to fully fill the width of circuit
+- [ ] It is possible to pack in more inputs than $k_{max}$ if some inputs share hashing steps at the leaf layer (ie, are connected to the same cell), that is, dynamic batch size to fully fill the width of circuit (up to batch generator)
 - [ ] Reduce depth ($d$), ie, use indexed Merkle tree with fixed max. capacity instead of complete SMT
 - [ ] Greater arity than 2?
-
+- [ ] Remove the special hashing rule h(0, 0) -> 0 -- then at each non-leaf layer, "empty" element is not zero and has to be hardcoded
 
 # License
 MIT

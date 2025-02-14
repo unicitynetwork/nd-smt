@@ -19,49 +19,6 @@ template PickOne(N) {
     out <== mux.out[0];
 }
 
-template CalculateTotal(n) {
-    signal input in[n];
-    signal output out;
-
-    signal sums[n];
-
-    sums[0] <== in[0];
-
-    for (var i = 1; i < n; i++) {
-        sums[i] <== sums[i-1] + in[i];
-    }
-
-    out <== sums[n-1];
-}
-
-template QuinSelector(choices) {
-    signal input in[choices];
-    signal input sel;
-    signal output out;
-
-    component lessThan = LessThan(7);  // 7 - number of in bits, up to 128 choices
-    lessThan.in[0] <== sel;
-    lessThan.in[1] <== choices;
-    lessThan.out === 1;
-
-    component calcTotal = CalculateTotal(choices);
-    component eqs[choices];
-
-    // For each item, check whether its index equals the input index.
-    for (var i = 0; i < choices; i ++) {
-        eqs[i] = IsEqual();
-        eqs[i].in[0] <== i;
-        eqs[i].in[1] <== sel;
-
-        // eqs[i].out is 1 if the index matches. As such, at most one input to
-        // calcTotal is not 0.
-        calcTotal.in[i] <== eqs[i].out * in[i];
-    }
-
-    // Returns 0 + 0 + 0 + item
-    out <== calcTotal.out;
-}
-
 template Mux() {
     signal input sel;
     signal input in[2];
@@ -110,8 +67,9 @@ template Cell(N, M) {
     component muxR = PickOne(N+M+1);
     component hasher = Hash2();
 
-    muxL.in[0] <-- 0;
-    muxR.in[0] <-- 0;
+    // if there is no special hashing rule h(0,0)->0, then there are per-layer hardcoded constants
+    muxL.in[0] <== 0;
+    muxR.in[0] <== 0;
 
     for (var i = 0; i < N; i++) {
         muxL.in[i+1] <== in[i];
@@ -162,7 +120,7 @@ template ForestHasher(DEPTH, WIDTH) {
                     cell[d][i].in[j] <== intermediateRoots[d-1][j];
                 }
                 for (var j = prevLayerCells; j < WIDTH; j++) {
-                    cell[d][i].in[j] <-- 0;
+                    cell[d][i].in[j] <== 0;
                 }
             }
             cell[d][i].proof <== proof;
@@ -212,4 +170,4 @@ template NdVerifier(DEPTH, WIDTH) {
     result2 === root2;
 }
 
-component main {public [batch, root1, root2]} = NdVerifier(32, 10);
+component main {public [batch, root1, root2]} = NdVerifier(32, 20);

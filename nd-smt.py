@@ -19,7 +19,6 @@ def jdump(d):
 
 poseidon = PoseidonHash()
 def hash(left, right):
-    # no such rule is needed in circuit as we connect relevant inputs straight to 'empty'
     if left == default and right == default:
         return default
     else:
@@ -202,8 +201,7 @@ class SparseMerkleTree:
                     if parent in forest:
                         print(f"redundant parent {parent} in proof", file=sys.stderr)
                         if forest[parent] != pv:
-                            print(f"parent mismatch {parent}->{forest[parent]}/{pv} in proof", file=sys.stderr)
-                            return False
+                            raise Exception(f"parent mismatch {parent}->{forest[parent]}/{pv} in proof")
                     if parent == path:
                         return pv
                     forest[parent] = pv
@@ -251,7 +249,6 @@ class SparseMerkleTree:
                 result[keylen].append(key)
             return result
 
-        #kz = {self.key_to_bits(key): self.default for key, value in zip(keys, values)}
         # (var naming)   k-v dict    matrix[layer]  output array
         #                --------    ------         ------------
         # input batch:   kv          bm             batch[self.depth]
@@ -300,7 +297,6 @@ class SparseMerkleTree:
                             wiringL[level-1][w] = len(batch[level])
                     else:
                         # no sibling provided - thus "empty";
-                        # technically no empties in middle layers if there are no special hashing rules
                         if k[-1] == '0':
                             wiringL[level-1][w] = len(batch[level])
                             wiringR[level-1][w] = 0
@@ -311,7 +307,6 @@ class SparseMerkleTree:
                     # sibling from proof
                     stats2[level] = stats2[level] + 1
                     proof.append(sv)
-                    # todo: avoid adding duplicates, e.g. when "empty" depends on layer
                     if k[-1] == '0':
                         wiringL[level-1][w] = len(batch[level])
                         wiringR[level-1][w] = len(proof) + width
@@ -330,7 +325,7 @@ class SparseMerkleTree:
 
 def main():
     depth = 32
-    width = 10
+    width = 20
 
     def to_int(aa):
         if isinstance(aa, (list, tuple)):
@@ -363,21 +358,21 @@ def main():
 
     # keys = [b'\x03', b'\x0a', b'\x0b', b'\x0c']
     # values = [b'value3', b'value0a', b'value0b', b'value0c']
-    # keys = []
-    # values = []
-    # for i in range(32):
-    #     ri = random.randint(0, 2**depth-1)
-    #     if ri in keys:
-    #         break
-    #     keys.append(ri)
-    #     values.append(to_int(("Val " + str(ri)).encode()))
+    keys = []
+    values = []
+    for i in range(32):
+        ri = random.randint(0, 2**depth-1)
+        if ri in keys:
+            break
+        keys.append(ri)
+        values.append(to_int(("Val " + str(ri)).encode()))
 
-    # proof = smt.batch_insert(keys, values)
-    # new_root = smt.get_root()
+    proof = smt.batch_insert(keys, values)
+    new_root = smt.get_root()
 
     keys = []
     values = []
-    for i in range(4):
+    for i in range(20):
         ri = random.randint(0, 2**depth-1)
         p = smt.key_to_bits(ri)
         if ri in keys:
