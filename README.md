@@ -101,6 +101,8 @@ Both halves' muxes are controlled by the same wiring signal. The positions of ba
 - [ ] Reduce depth ($d$), ie, use indexed Merkle tree with fixed max. capacity instead of complete SMT
 - [ ] Greater arity than 2?
 - [ ] Remove the special hashing rule h(0, 0) -> 0 -- then at each non-leaf layer, "empty" element is not zero and has to be hardcoded
+- [ ] Split up the input proof: left half, right half, maybe even/odd layers, etc; so that less wide muxes can be used. If the tree is well populated then proofs gets larger, than currently configured.
 
 # License
+
 MIT
