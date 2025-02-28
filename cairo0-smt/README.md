@@ -17,16 +17,26 @@ cairo-compile --proof_mode cairo0-ver.cairo --output cairo0-ver.json
 python3 ndsmt.py > cairo_input.json
 
 # run, produce execution trace and memory dump
-cairo-run --layout recursive_with_poseidon --print_output --program cairo0-ver.json --program_input cairo_input.json --air_public_input ver_pub_in.json  --air_private_input ver_priv_in.json --trace_file ver_trace.bin --memory_file ver_memory.bin --proof_mode
+cairo-run --layout recursive_with_poseidon --print_output --program cairo0-ver.json  \
+        --program_input cairo_input.json --air_public_input ver_pub_in.json   \
+        --air_private_input ver_priv_in.json --trace_file ver_trace.bin   \
+        --memory_file ver_memory.bin --proof_mode
 
-# get stone prover from https://github.com/starkware-libs/stone-prover
+# get stone prover from https://github.com/starkware-libs/stone-prover  (hint: `bazel build //...`)
 
-# optimal prover parameters for specific transcript size
+# optional: optimal prover parameters for specific transcript size
 python3 ../stone-prover/gen_stone_params.py ver_pub_in.json > cpu_air_params.json
 # reducing PoW bits makes proving faster (at the cost of minor proof size increase)
 
-cpu_air_prover --out_file ver_proof.json --private_input_file ver_priv_in.json   --public_input_file ver_pub_in.json --prover_config_file cpu_air_prover_config.json --parameter_file cpu_air_params.json
+cpu_air_prover --out_file ver_proof.json --private_input_file ver_priv_in.json  \
+        --public_input_file ver_pub_in.json --prover_config_file cpu_air_prover_config.json  \
+        --parameter_file cpu_air_params.json
 
 cpu_air_verifier --in_file ver_proof.json || echo Broken
 ```
-Have a look at the `ver_proof.jsom` file; if the public inputs are as expected, then the program execution given these public and unknown, but appropriate private inputs is ``proven'' to be successful. But which program? stone prover's verifier does not care. Another look shows, that stone prover does not care about leaking private input to the proof either. Go figure.
+Have a look at the `ver_proof.json` file; if the public inputs are as expected, then the program execution given these public and unknown, but appropriate private inputs is ``proven'' to be successful. But which program? stone prover's verifier does not care. Another look shows, that stone prover does not care about leaking private input to the proof either. Go figure.
+
+## Optimization ideas
+
+- Less recursion.
+- More hints -- there is only one way the hash chains compute, thus, everything does not have to be the 'deterministic machine'.
