@@ -91,6 +91,79 @@ Internal layers' muxes are connected to a vector a with
 
 Both halves' muxes are controlled by the same wiring signal. The positions of batch elements and proof elements are encoded into the control wires during the pre-processing, that is, control signals are part of the witness.
 
+## Walkthrough
+
+#### Install circom, snarkjs, optionally [rapidsnark](https://github.com/iden3/rapidsnark)
+See https://docs.circom.io/getting-started/installation/
+
+
+#### Generate the circuit
+
+```sh
+circom ndproof.circom --O2 --r1cs --wasm --c
+```
+
+> [!NOTE]
+> generated c code works on amd64 only; wasm based witness generation is slow!
+
+> [!NOTE]
+> generated wasm code works up to a certain circuit size
+
+
+#### Perform the trusted setup ceremony (depends on circuit)
+See https://docs.circom.io/getting-started/proving-circuits/
+
+> [!NOTE]
+> the degree 12 there is ok for trivial circuits. $2^{\mathsf{degree}}$ should be larger than the number of constraints, as output by the next command.
+
+Example for ~5 million constraints. Appropriate to run over a weekend.
+```sh
+export NODE_OPTIONS="--max-old-space-size=8192"
+snarkjs powersoftau new bn128 23 pot23_0000.ptau -v
+snarkjs powersoftau contribute pot23_0000.ptau pot23_0001.ptau --name="First contribution" -v -e="blaah"
+snarkjs powersoftau prepare phase2 pot23_0001.ptau pot23_final.ptau -v
+# following is circuit specific
+snarkjs groth16 setup ndproof.r1cs pot23_final.ptau ndproof_0000.zkey
+snarkjs zkey contribute ndproof_0000.zkey ndproof_0001.zkey --name="1st Contributor Name" -v -e="blablaah"
+snarkjs zkey export verificationkey ndproof_0001.zkey verification_key.json
+```
+
+#### Produce input
+```sh
+pip3 install -r reqirements.txt
+python3 ndsmt.py > input.json
+```
+#### Witness generation
+```sh
+snarkjs wtns calculate ndproof_js/ndproof.wasm input.json witness.wtns
+```
+
+or alternatively (x86 only):
+```sh
+cd ndproof_cpp
+make
+./ndproof ../input.json ../witness.wtns
+```
+
+#### Prove
+```sh
+# increase nodejs limits for large circuits
+export NODE_OPTIONS="--max-old-space-size=8192"
+snarkjs groth16 prove ndproof_0001.zkey witness.wtns proof.json public.json
+```
+
+#### Prove using rapidsnark
+
+```sh
+prover ndproof_0001.zkey witness.wtns proof.json public.json
+```
+
+#### Verify
+```sh
+snarkjs groth16 verify verification_key.json public.json proof.json
+```
+
+
 ## Optimization ideas
 
 - [x] Special mux with 2 outs and multiplexed control (minor effect on number of wires, removed)
